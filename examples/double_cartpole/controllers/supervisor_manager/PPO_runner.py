@@ -1,169 +1,150 @@
 import numpy as np
-from numpy import convolve, mean, ones
-
-import pickle
-import os
 
 from agent.PPO_agent import PPOAgent, Transition
-from supervisor_controller import CartPoleSupervisor
-from utilities import plotData
+from supervisor_controller import DoubleCartPoleSupervisor
+from utilities import plot_data
 
 # Change these variables if needed
-EPISODE_LIMIT = 20000
+EPISODE_LIMIT = 10000
 STEPS_PER_EPISODE = 200
 NUM_ROBOTS = 2
 
-save_dir = rf"C:\Users\stavr\OneDrive\Έγγραφα\ECE AUTH\semester_8\RL\project\deepworlds\examples\double_cartpole\controllers\supervisor_manager\models"
-save_id = "other_pole_other_cart_env_0001"
-save_path = save_dir + rf"\{save_id}"
+def run(full_space=True):
+    """
+    Performs the training of the PPO agants and then deployes the trained agents to run in an infinite loop.
 
-try:
-   os.makedirs(save_path)
-   os.makedirs(save_path + rf"\agent_0")
-   os.makedirs(save_path + rf"\agent_1")
-   os.makedirs(save_path + rf"\rewards")
-   os.makedirs(save_path + rf"\lengths")
-except FileExistsError:
-   print("directory already exists")
+    Also plots the training results and prints progress during training.
 
-def run():
+    :param full_space: Toggle between providing each agent with the full observation space or only its own cart's data.
+
+        - When True, each agent receives the full observation space, including the other cart's data: 
+            [x_cart, v_cart, theta_pole, v_pole, x_other_cart, v_other_cart, theta_other_pole, v_other_pole].
+        - When False, each agent receives only its own cart's data: [x_cart, v_cart, theta_pole, v_pole].
+    :type full_space: bool
+    """
     # Initialize supervisor object
-    supervisorEnv = CartPoleSupervisor(num_robots=NUM_ROBOTS)
-
-    episodeCount = 12000
-
-    # The agent used here is trained with the PPO algorithm (https://arxiv.org/abs/1707.06347).
+    supervisor = DoubleCartPoleSupervisor(num_robots=NUM_ROBOTS)
+    # Determine the dimensonality of the observation space each agent will be fed based on the `full_space` parameter
+    agent_obs_dim = (
+        supervisor.observation_space.shape[0] if full_space 
+        else supervisor.observation_space.shape[0] // supervisor.num_robots
+    )
+    # The agents used here are trained with the PPO algorithm (https://arxiv.org/abs/1707.06347).
     agent_1 = PPOAgent(
-        supervisorEnv.observationSpace,
-        supervisorEnv.actionSpace,
+        agent_obs_dim,
+        supervisor.action_space.n,
         clip_param=0.2,
         max_grad_norm=0.5,
         ppo_update_iters=5,
         batch_size=8,
         gamma=0.99,
         use_cuda=False,
-        actor_lr=0.0001,
-        critic_lr=0.0003,
+        actor_lr=0.001,
+        critic_lr=0.003,
     )
     agent_2 = PPOAgent(
-        supervisorEnv.observationSpace,
-        supervisorEnv.actionSpace,
+        agent_obs_dim,
+        supervisor.action_space.n,
         clip_param=0.2,
         max_grad_norm=0.5,
         ppo_update_iters=5,
         batch_size=8,
         gamma=0.99,
         use_cuda=False,
-        actor_lr=0.0001,
-        critic_lr=0.0003,
+        actor_lr=0.001,
+        critic_lr=0.003,
     )
     agents = [agent_1, agent_2]
-    agent_1.load(save_path + rf"/agent_0/e11999")
-    agent_2.load(save_path + rf"/agent_1/e11999")
 
+    episode_count = 0
     solved = False  # Whether the solved requirement is met
 
     # Run outer loop until the episodes limit is reached or the task is solved
-    while not solved and episodeCount < EPISODE_LIMIT:
-        state = supervisorEnv.reset()  # Reset robots and get starting observation
-        supervisorEnv.episodeScore = 0
-        supervisorEnv.episode_length = 0
+    while not solved and episode_count < EPISODE_LIMIT:
+        state = supervisor.reset()  # Reset robots and get starting observation
+        supervisor.episode_score = 0
         action_probs = []
         # Inner loop is the episode loop
         for step in range(STEPS_PER_EPISODE):
             # In training mode the agent samples from the probability distribution, naturally implementing exploration
-            selectedActions, action_probs = [], []
+            selected_actions, action_probs = [], []
             for i in range(NUM_ROBOTS):
-                selectedAction, actionProb = agents[i].work(state[i],
-                                                        type_="selectAction")
-                action_probs.append(actionProb)
-                selectedActions.append(selectedAction)
+                if full_space:
+                    agent_state = state
+                else:
+                    agent_state = state[(i * agent_obs_dim): ((i + 1) * agent_obs_dim)]
+                selected_action, action_prob = agents[i].work(
+                    agent_state,
+                    type_="selectAction"
+                )
+                action_probs.append(action_prob)
+                selected_actions.append(selected_action)
 
-            # Step the supervisor to get the current selectedAction reward, the new state and whether we reached the
+            # Step the supervisor to get the current selected_action reward, the new state and whether we reached the
             # done condition
-            newState, reward, done, info = supervisorEnv.step(
-                [*selectedActions])
+            new_state, reward, done, info = supervisor.step(
+                [*selected_actions]
+            )
 
             # Save the current state transitions from all robots in agent's memory
             for i in range(NUM_ROBOTS):
+                if full_space:
+                    agent_state = state
+                    agent_new_state = new_state
+                else:
+                    agent_state = state[(i * agent_obs_dim): ((i + 1) * agent_obs_dim)]
+                    agent_new_state = new_state[(i * agent_obs_dim): ((i + 1) * agent_obs_dim)]
                 agents[i].store_transition(
-                    Transition(state[i], selectedActions[i], action_probs[i],
-                               reward[i], newState[i]))
+                    Transition(
+                        agent_state,
+                        selected_actions[i],
+                        action_probs[i],
+                        reward[i],
+                        agent_new_state,
+                    )
+                )
+            # Accumulate episode reward
+            supervisor.episode_score += np.array(reward)
 
-            supervisorEnv.episodeScore += np.array(
-                reward)  # Accumulate episode reward
-            supervisorEnv.episode_length += np.array([1, 1])
             if done:
                 # Save the episode's score
-                supervisorEnv.episodeScoreList.append(
-                    supervisorEnv.episodeScore)
-                supervisorEnv.episode_length_list.append(supervisorEnv.episode_length)
+                supervisor.episode_score_list.append(
+                    supervisor.episode_score
+                )
+                # Perform a training step
                 for i in range(NUM_ROBOTS):
                     agents[i].train_step(batch_size=step + 1)
-                solved = supervisorEnv.solved(
-                )  # Check whether the task is solved
+                # Check whether the task is solved
+                solved = supervisor.solved()
                 break
 
-            state = newState  # state for next step is current step's newState
+            state = new_state  # state for next step is current step's new_state
 
-        avgActionProb = [
-            round(mean(action_probs[i]), 4) for i in range(NUM_ROBOTS)
+        avg_action_prob = [
+            round(np.mean(action_probs[i]), 4) for i in range(NUM_ROBOTS)
         ]
 
         # The average action probability tells us how confident the agent was of its actions.
         # By looking at this we can check whether the agent is converging to a certain policy.
         print(
-            f"Episode: {episodeCount} Score = {supervisorEnv.episodeScore}, Length = {supervisorEnv.episode_length} | Average Action Probabilities = {avgActionProb}"
+            f"Episode: {episode_count} Score = {supervisor.episode_score} | Average Action Probabilities = {avg_action_prob}"
         )
 
-        if (episodeCount + 1) % 2000 == 0:
-            try:
-                for i in range(NUM_ROBOTS):
-                    agent_path = save_path + rf"\agent_{i}\e{episodeCount}"
-                    agents[i].save(agent_path)
+        episode_count += 1  # Increment episode counter
 
-                rewards_file = save_path + rf"\rewards\e{episodeCount}.pickle"
-                try:
-                    with open(rewards_file, 'rb') as handle:
-                        episode_rewards = pickle.load(handle)   
-                except:
-                    episode_rewards = [[0, 0]] 
-                episode_rewards = np.concatenate((episode_rewards, supervisorEnv.episodeScoreList))
-                with open(rewards_file, 'wb+') as handle:
-                    pickle.dump(episode_rewards, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    moving_avg_n = 10
+    plot_data(
+        np.convolve(
+            np.array(supervisor.episode_score_list).T[0],
+            np.ones((moving_avg_n,)) / moving_avg_n,
+            mode='valid',
+        ),
+        "episode",
+        "episode score",
+        "Episode scores over episodes", save=True, save_name="reward.png"
+    )
 
-                lengths_file = save_path + rf"\lengths\e{episodeCount}.pickle"
-                try:
-                    with open(lengths_file, 'rb') as handle:
-                        episode_lengths = pickle.load(handle)   
-                except:
-                    episode_lengths = [[0, 0]] 
-                episode_lengths = np.concatenate((episode_lengths, supervisorEnv.episodeScoreList))
-                with open(lengths_file, 'wb+') as handle:
-                    pickle.dump(episode_lengths, handle, protocol=pickle.HIGHEST_PROTOCOL)
-            except Exception as e:
-                print(f"Error in saving: {e}")
-
-        episodeCount += 1  # Increment episode counter
-
-    # with open(save_path + rf"\rewards\e9999.pickle", "rb") as f:
-    #     rewards = np.array(pickle.load(f))
-    
-    rewards = np.array(supervisorEnv.episodeScoreList)
-    lengths = np.array(supervisorEnv.episode_length_list)
-    movingAvgN = 10
-    plotData(
-        convolve(rewards.T[0],
-                 ones((movingAvgN,)) / movingAvgN,
-                 mode='valid'), "episode", "episode score",
-        "Episode scores over episodes", save=True, saveName=f"{save_id}_rewards.png")
-    plotData(
-        convolve(lengths.T[0],
-                 ones((movingAvgN,)) / movingAvgN,
-                 mode='valid'), "episode", "episode length",
-        "Episode length over episodes", save=True, saveName=f"{save_id}_lengths.png")
-
-    if not solved and not supervisorEnv.test:
+    if not solved:
         print("Reached episode limit and task was not solved.")
     else:
         if not solved:
@@ -171,22 +152,27 @@ def run():
         elif solved:
             print("Task is solved, deploying agent for testing...")
 
-    state = supervisorEnv.reset()
-    supervisorEnv.test = True
-    supervisorEnv.episodeScore = 0
+    state = supervisor.reset()
+    supervisor.episode_score = 0
     while True:
-        selectedActions = []
-        actionProbs = []
+        selected_actions = []
+        action_probs = []
         for i in range(NUM_ROBOTS):
-            selectedAction, actionProb = agents[i].work(state[i],
-                                                    type_="selectAction")
-            actionProbs.append(actionProb)
-            selectedActions.append(selectedAction)
+            if full_space:
+                agent_state = state
+            else:
+                agent_state = state[(i * agent_obs_dim): ((i + 1) * agent_obs_dim)]
+            selected_action, action_prob = agents[i].work(
+                agent_state, # state[0:4] for 1st robot, state[4:8] for 2nd robot
+                type_="selectAction"
+            )
+            action_probs.append(action_prob)
+            selected_actions.append(selected_action)
 
-        state, reward, done, _ = supervisorEnv.step(selectedActions)
-        supervisorEnv.episodeScore += np.array(reward)  # Accumulate episode reward
+        state, reward, done, _ = supervisor.step(selected_actions)
+        supervisor.episode_score += np.array(reward)  # Accumulate episode reward
 
         if done:
-            print("Reward accumulated =", supervisorEnv.episodeScore)
-            supervisorEnv.episodeScore = 0
-            state = supervisorEnv.reset()
+            print(f"Reward accumulated = {supervisor.episode_score}")
+            supervisor.episode_score = 0
+            state = supervisor.reset()

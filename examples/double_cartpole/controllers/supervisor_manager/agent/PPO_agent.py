@@ -1,16 +1,16 @@
+
+from collections import namedtuple
+
+import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.distributions import Categorical
-from torch import from_numpy, no_grad, save, load, tensor, clamp
+from torch import clamp, from_numpy, load, manual_seed, no_grad, save, tensor
 from torch import float as torch_float
 from torch import long as torch_long
 from torch import min as torch_min
+from torch.distributions import Categorical
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
-import numpy as np
-from torch import manual_seed
-from collections import namedtuple
-import codecs
 
 Transition = namedtuple('Transition', ['state', 'action', 'a_log_prob', 'reward', 'next_state'])
 
@@ -160,14 +160,14 @@ class PPOAgent:
                 surr1 = ratio * advantage
                 surr2 = clamp(ratio, 1 - self.clip_param, 1 + self.clip_param) * advantage
 
-                # update actor network
+                # Update actor network
                 action_loss = -torch_min(surr1, surr2).mean()  # MAX->MIN descent
                 self.actor_optimizer.zero_grad()  # Delete old gradients
                 action_loss.backward()  # Perform backward step to compute new gradients
                 nn.utils.clip_grad_norm_(self.actor_net.parameters(), self.max_grad_norm)  # Clip gradients
                 self.actor_optimizer.step()  # Perform training step based on gradients
 
-                # update critic network
+                # Update critic network
                 value_loss = F.mse_loss(gain_index, value)
                 self.critic_optimizer.zero_grad()
                 value_loss.backward()
@@ -179,13 +179,38 @@ class PPOAgent:
 
 
 class Actor(nn.Module):
+    """
+    The Actor network for the PPO agent.
+
+    This implementation consists of three fully connected layers, with ReLU activations 
+    for the hidden layers, and a softmax activation at the output layer to produce 
+    action probabilities.
+    """
+
     def __init__(self, number_of_inputs, number_of_outputs):
+        """
+        Initializes the Actor network layers.
+
+        :param number_of_inputs: The dimensionality of the input state space.
+        :type number_of_inputs: int
+        :param number_of_outputs: The dimensionality of the action space, indicating 
+            the number of discrete actions.
+        :type number_of_outputs: int
+        """
         super(Actor, self).__init__()
         self.fc1 = nn.Linear(number_of_inputs, 10)
         self.fc2 = nn.Linear(10, 10)
         self.action_head = nn.Linear(10, number_of_outputs)
 
     def forward(self, x):
+        """
+        Defines the forward pass of the Actor network.
+
+        :param x: The input state vector.
+        :type x: torch.Tensor
+        :return: A probability distribution over actions as computed by the network.
+        :rtype: torch.Tensor
+        """
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         action_prob = F.softmax(self.action_head(x), dim=1)
@@ -193,13 +218,35 @@ class Actor(nn.Module):
 
 
 class Critic(nn.Module):
+    """
+    The Critic network for the PPO agent.
+
+    This implementation consists of three fully connected layers with ReLU activations 
+    for the hidden layers and a linear activation at the output layer, which outputs 
+    a scalar value representing the state value.
+    """
+
     def __init__(self, number_of_inputs):
+        """
+        Initializes the Critic network layers.
+
+        :param number_of_inputs: The dimensionality of the input state space.
+        :type number_of_inputs: int
+        """
         super(Critic, self).__init__()
         self.fc1 = nn.Linear(number_of_inputs, 10)
         self.fc2 = nn.Linear(10, 10)
         self.state_value = nn.Linear(10, 1)
 
     def forward(self, x):
+        """
+        Defines the forward pass of the Critic network.
+
+        :param x: The input state vector.
+        :type x: torch.Tensor
+        :return: The estimated value of the input state.
+        :rtype: torch.Tensor
+        """
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         value = self.state_value(x)

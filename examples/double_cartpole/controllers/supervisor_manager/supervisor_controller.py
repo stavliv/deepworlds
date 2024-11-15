@@ -1,81 +1,98 @@
 import numpy as np
 from deepbots.supervisor import EmitterReceiverSupervisorEnv
+from gym.spaces import Box, Discrete
 
-from utilities import normalizeToRange
+from utilities import normalize_to_range
 
 
-class CartPoleSupervisor(EmitterReceiverSupervisorEnv):
+class DoubleCartPoleSupervisor(EmitterReceiverSupervisorEnv):
     """
-    CartPoleSupervisor acts as an environment having all the appropriate methods such as get_reward().
-    Taken from https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py and modified for Webots.
+    DoubleCartPoleSupervisor serves as an environment for a double cart-pole system, 
+    with a setup including two cart-poles that are joint on the tips on a shared platform. It provides all necessary 
+    methods, such as get_reward(), to interact with and manage the environment.
+
     Description:
-        A pole is attached by an un-actuated joint to a cart, which moves forwards and backwards. The pendulum
-        starts upright, and the goal is to prevent it from falling over by increasing and reducing the cart's
-        velocity. 
-        Works using the Emitter Receiver Scheme.
-    Source:
-        This environment corresponds to the version of the cart-pole problem described
-        by Barto, Sutton, and Anderson
+        Two poles are attached by un-actuated joints to two separate carts, and the top 
+        tips of the two poles are connected through an extra pole. The carts can move 
+        forward and backward along the x-axis. Each pole starts upright, and the goal is 
+        to prevent both poles from falling over by adjusting the velocities of the carts. 
+        This setup uses the Emitter-Receiver communication scheme for interaction.
+    
     Observation:
-        Type: Box(4)
-        Num	Observation                 Min         Max
-        0	Cart Position x axis      -0.4            0.4
-        1	Cart Velocity             -Inf            Inf
-        2	Pole Angle                -1.3 rad        1.3 rad
-        3	Pole Velocity At Tip      -Inf            Inf
+        Type: Box(8)
+        Num Observation                Min         Max
+        0   Cart1 Position x axis      -0.4        0.4
+        1   Cart1 Velocity             -Inf        Inf
+        2   Pole1 Angle                -1.3 rad    1.3 rad
+        3   Pole1 Velocity At Tip      -Inf        Inf
+        4   Cart2 Position x axis      -0.4        0.4
+        5   Cart2 Velocity             -Inf        Inf
+        6   Pole2 Angle                -1.3 rad    1.3 rad
+        7   Pole2 Velocity At Tip      -Inf        Inf
+        
+        Each observation provides the position, velocity, angle, and angular velocity of 
+        both carts and poles, allowing each agent to make informed decisions to balance 
+        the poles.
+
     Actions:
         Type: Discrete(2)
         Num	Action
         0	Move cart forward
         1	Move cart backward
-        Note: The amount the velocity that is reduced or increased is not fixed; it depends on the angle the pole is
-        pointing. This is because the center of gravity of the pole increases the amount of energy needed to move the
-        cart underneath it
+
+        Note: The precise velocity change for each action depends on the pole's angle, as 
+        the pole’s center of gravity affects the force required to stabilize it.
+
     Reward:
-        Reward is 1 for every step taken, including the termination step
+        The agent receives a reward of 1 for every step the poles are balanced, including 
+        the termination step. This encourages agents to maintain balance for as long as possible.
+
     Starting State:
-        [0.0, 0.0, 0.0, 0.0]
+        All observations are initialized to zero:
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
     Episode Termination:
-        Pole Angle is more than 0.261799388 rad (15 degrees)
-        Cart Position is more than absolute 0.89 on x axis (cart has reached arena edge)
-        Episode length is greater than 200
-        Solved Requirements (average episode score in last 100 episodes > 195.0)
+        The episode terminates if any of the following conditions are met:
+        - Either pole’s angle exceeds ±15 degrees (0.2618 rad).
+        - Either cart’s position reaches ±0.35 on the x-axis, indicating the cart has 
+          reached the platform’s edge.
+        - The episode length exceeds 200 steps.
+
+    Solved Requirements:
+        The task is considered solved if the average episode score over the last 100 
+        episodes exceeds 195.0, indicating consistent performance in balancing both poles.
     """
 
     def __init__(self, num_robots=2):
         """
         In the constructor, the agent object is created.
         References to robots and the pole endpoints are initialized here, used for building the observation.
-        When in test mode (self.test = True) the agent stops being trained and picks actions in a non-stochastic way.
-        
+  
         :param num_robots: Number of robots in the environment
         :type num_robots: int
         """
         self.num_robots = num_robots
-        super(CartPoleSupervisor, self).__init__()
-        self.observationSpace = 8
-        self.actionSpace = 2
+        super(DoubleCartPoleSupervisor, self).__init__()
+        # Observation space contains info about both cartpoles
+        self.observation_space = Box(
+            low=np.array([-0.4, -np.inf, -1.3, -np.inf, -0.4, -np.inf, -1.3, -np.inf]),
+            high=np.array([0.4, np.inf, 1.3, np.inf, 0.4, np.inf, 1.3, np.inf]),
+            dtype=np.float64
+        )
+        # Action space represents the available actions for each cart seperately
+        self.action_space = Discrete(2)
 
         self.robot = [
             self.getFromDef("ROBOT" + str(i+1)) for i in range(self.num_robots)
         ]
-        self.poleEndpoint = [
-            self.getFromDef(f"POLE_ENDPOINT_" + str(i+1))
+        self.pole_endpoint = [
+            self.getFromDef("POLE_ENDPOINT_" + str(i+1))
             for i in range(self.num_robots)
         ]
 
-        # self.pole_sensor = [
-        #     self.getFromDevice('POLE_POS_SENSOR_' + str(i))
-        #     for i in range(self.num_robots)
-        # ]
-
-        self.messageReceived = None  # Variable to save the messages received from the robots
-        self.episodeScore = np.array(num_robots)
-        self.episodeScoreList = [
-        ]  # A list to save all the episode scores, used to check if task is solved
-        self.episode_length = np.array(num_robots)
-        self.episode_length_list = []
-        self.test = False  # Whether the agent is in test mode
+        self.message_received = None  # Variable to save the messages received from the robots
+        self.episode_score = np.array(num_robots)
+        self.episode_score_list = []  # A list to save all the episode scores, used to check if task is solved
 
     def initialize_comms(self, emitter_name=None, receiver_name=None):
         """
@@ -127,7 +144,7 @@ class CartPoleSupervisor(EmitterReceiverSupervisorEnv):
     def get_observations(self):
         """
         This get_observation implementation builds the required observations for the MultiCartPole problem.
-        All values apart from pole angle are gathered here from the robots and poleEndpoint objects.
+        All values apart from pole angle are gathered here from the robots and pole_endpoint objects.
         The pole angle value is taken from the messages sent by the robots.
         All values are normalized appropriately to [-1, 1], according to their original ranges.
         :return: Observation:[[cartPosition0, cartVelocity0, poleAngle0, poleTipVelocity0],
@@ -137,10 +154,10 @@ class CartPoleSupervisor(EmitterReceiverSupervisorEnv):
         """
         message_received = self.handle_receiver()
         if None not in message_received:
-            self.messageReceived = np.array(
+            self.message_received = np.array(
                 list(map(float, message_received)))
         else:
-            self.messageReceived = np.array([0.0 for _ in range(self.num_robots)])
+            self.message_received = np.array([0.0 for _ in range(self.num_robots)])
 
         # Position on y-axis
         positions = [
@@ -148,57 +165,36 @@ class CartPoleSupervisor(EmitterReceiverSupervisorEnv):
             for i in range(self.num_robots)
         ]
 
-        cart_positions, cart_velocities, pole_angles, endpoint_velocities, other_pole_angles, other_endpoint_velocities = [], [], [], [], [], []
-        other_cart_positions, other_cart_velocities = [], []
+        cart_positions, cart_velocities, pole_angles, endpoint_velocities = [], [], [], []
         for i in range(self.num_robots):
-            # Position on y-axis
+            # Position on x-axis
             cart_positions.append(
-                normalizeToRange(positions[i], -0.35, 0.35, -1.0, 1.0))
+                normalize_to_range(positions[i], -0.35, 0.35, -1.0, 1.0)
+            )
 
-            # Linear velocity of cart on y-axis
+            # Linear velocity of cart on x-axis
             cart_velocities.append(
-                normalizeToRange(self.robot[i].getVelocity()[1], -0.2, 0.2, -1.0, 1.0, clip=True))
+                normalize_to_range(self.robot[i].getVelocity()[0], -0.2, 0.2, -1.0, 1.0, clip=True)
+            )
 
             # Pole angle off vertical
             pole_angles.append(
-                normalizeToRange(self.messageReceived[i],
-                                 -0.261799388,
-                                 0.261799388,
-                                 -1.0,
-                                 1.0,
-                                 clip=True))
+                normalize_to_range(
+                    self.message_received[i],
+                    -0.261799388,
+                    0.261799388,
+                    -1.0,
+                    1.0,
+                    clip=True
+                )
+            )
 
-            # Angular velocity x of endpoint
-            endpoint_velocities.append(np.clip(self.poleEndpoint[i].getVelocity()[3], -1.0, 1.0))
+            # Angular velocity y of endpoint
+            endpoint_velocities.append(np.clip(self.pole_endpoint[i].getVelocity()[4], -1.0, 1.0))
 
-            # Other cart's position on y-axis
-            other_cart_positions.append(
-                normalizeToRange(positions[i - 1], -0.35, 0.35, -1.0, 1.0))
-            
-            # Linear velocity of the other cart on y-axis
-            other_cart_velocities.append(
-                normalizeToRange(self.robot[i - 1].getVelocity()[1], -0.2, 0.2, -1.0, 1.0, clip=True))
-
-            # Other pole angle off vertical
-            other_pole_angles.append(
-                normalizeToRange(self.messageReceived[i - 1],
-                                 -0.261799388,
-                                 0.261799388,
-                                 -1.0,
-                                 1.0,
-                                 clip=True))
-
-            # Angular velocity x of other endpoint
-            other_endpoint_velocities.append(np.clip(self.poleEndpoint[i - 1].getVelocity()[3], -1.0, 1.0))
-
-        obs = np.array([
-            cart_positions, cart_velocities, pole_angles, endpoint_velocities, 
-            other_cart_positions, other_cart_velocities, other_pole_angles, other_endpoint_velocities,
-        ]).T
-        # print("--------------------------------------------")
-        # print(obs)
-
-        return obs
+        return (np.array([
+            cart_positions, cart_velocities, pole_angles, endpoint_velocities
+        ]).T).flatten()
 
     def get_reward(self, action=None):
         """
@@ -208,13 +204,8 @@ class CartPoleSupervisor(EmitterReceiverSupervisorEnv):
         :return: Always 1
         :rtype: int
         """
-        return (np.abs(self.messageReceived) < 0.261799388).astype(int)
-        # positions = np.array([
-        #     self.robot[i].getPosition()[1]
-        #     for i in range(self.num_robots)
-        # ])
 
-        # return (1 - min((abs(positions[0] + positions[1]) / 2), 0.35) / 0.35) * (np.abs(self.messageReceived) < 0.261799388).astype(int)
+        return (np.abs(self.message_received) < 0.261799388).astype(int)
 
     def is_done(self):
         """
@@ -224,13 +215,10 @@ class CartPoleSupervisor(EmitterReceiverSupervisorEnv):
         :rtype: bool
         """
 
-        # if np.all(self.episodeScore) > 195.0:
-        #     return True
-
-        if np.all(self.episode_length) > 195.0:
+        if np.all(self.episode_score > 195.0):
             return True
 
-        if not all(np.abs(self.messageReceived) < 0.261799388):  # 15 degrees off vertical
+        if not all(np.abs(self.message_received) < 0.261799388):  # 15 degrees off vertical
             return True
 
         positions = np.array([
@@ -248,12 +236,7 @@ class CartPoleSupervisor(EmitterReceiverSupervisorEnv):
         :return: Default observation zero vector
         :rtype: list
         """
-        observation = []
-
-        for _ in range(self.num_robots):
-            robot_obs = [0.0 for _ in range(self.observationSpace)]
-            observation.append(robot_obs)
-
+        observation = [0.0 for _ in range(self.observation_space.shape[0])]
         return observation
 
     def get_info(self):
@@ -269,13 +252,9 @@ class CartPoleSupervisor(EmitterReceiverSupervisorEnv):
         :return: True if task is solved, False otherwise
         :rtype: bool
         """
-        # if len(self.episodeScoreList) > 100:  # Over 100 trials thus far
-        #     if np.all(np.mean(self.episodeScoreList[-100:], axis=0) > 195.0):  # Last 100 episode scores average value
-        #         return True
-        if len(self.episode_length_list) > 100:  # Over 100 trials thus far
-            if np.all(np.mean(self.episode_length_list[-100:], axis=0) > 195.0):  # Last 100 episode scores average value
+        if len(self.episode_score_list) > 100:  # Over 100 trials thus far
+            if np.all(np.mean(self.episode_score_list[-100:], axis=0) >= 195.0):  # Last 100 episode scores average value
                 return True
-
         return False
 
     def reset(self):

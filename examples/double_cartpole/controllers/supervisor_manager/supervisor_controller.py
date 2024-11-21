@@ -146,11 +146,10 @@ class DoubleCartPoleSupervisor(EmitterReceiverSupervisorEnv):
         This get_observation implementation builds the required observations for the MultiCartPole problem.
         All values apart from pole angle are gathered here from the robots and pole_endpoint objects.
         The pole angle value is taken from the messages sent by the robots.
-        All values are normalized appropriately to [-1, 1], according to their original ranges.
-        :return: Observation:[[cartPosition0, cartVelocity0, poleAngle0, poleTipVelocity0],
-                              [cartPosition1, cartVelocity1, poleAngle1, poleTipVelocity1], ...
-                              [cartPosition9, cartVelocity9, poleAngle9, poleTipVelocity9]]
-        :rtype: list(list(list(float), list(float), float, float))   
+        All values are normalized appropriately to -1, 1], according to their original ranges.
+        :return: Observation:[cart_position1, cart_velocity1, pole_angle1, pole_tip_velocity1,
+                              cart_position2, cart_velocity2, pole_angle2, pole_tip_velocity2]
+        :rtype: list(float)   
         """
         message_received = self.handle_receiver()
         if None not in message_received:
@@ -204,7 +203,6 @@ class DoubleCartPoleSupervisor(EmitterReceiverSupervisorEnv):
         :return: Always 1
         :rtype: int
         """
-
         return (np.abs(self.message_received) < 0.261799388).astype(int)
 
     def is_done(self):
@@ -214,7 +212,6 @@ class DoubleCartPoleSupervisor(EmitterReceiverSupervisorEnv):
         :return: True if termination conditions are met, False otherwise
         :rtype: bool
         """
-
         if np.all(self.episode_score > 195.0):
             return True
 
@@ -234,7 +231,7 @@ class DoubleCartPoleSupervisor(EmitterReceiverSupervisorEnv):
         """
         Returns the default observation of zeros.
         :return: Default observation zero vector
-        :rtype: list
+        :rtype: list(float)
         """
         observation = [0.0 for _ in range(self.observation_space.shape[0])]
         return observation

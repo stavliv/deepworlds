@@ -18,8 +18,8 @@ def run(full_space=True):
     :param full_space: Toggle between providing each agent with the full observation space or only its own cart's data.
 
         - When True, each agent receives the full observation space, including the other cart's data: 
-            [x_cart, v_cart, theta_pole, v_pole, x_other_cart, v_other_cart, theta_other_pole, v_other_pole].
-        - When False, each agent receives only its own cart's data: [x_cart, v_cart, theta_pole, v_pole].
+            [x_cart1, v_cart1, theta_pole1, v_pole1, x_cart2, v_cart2, theta_pole2, v_pole2].
+        - When False, each agent receives only its own cart's data: [x_cart, v_cart, theta_pole, v_pole]. Deafults to True.
     :type full_space: bool
     """
     # Initialize supervisor object
@@ -120,12 +120,11 @@ def run(full_space=True):
 
             state = new_state  # state for next step is current step's new_state
 
+        # The average action probability tells us how confident the agent was of its actions.
+        # By looking at this we can check whether the agent is converging to a certain policy.
         avg_action_prob = [
             round(np.mean(action_probs[i]), 4) for i in range(NUM_ROBOTS)
         ]
-
-        # The average action probability tells us how confident the agent was of its actions.
-        # By looking at this we can check whether the agent is converging to a certain policy.
         print(
             f"Episode: {episode_count} Score = {supervisor.episode_score} | Average Action Probabilities = {avg_action_prob}"
         )
